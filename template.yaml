@@ -1,0 +1,84 @@
+Parameters:
+  vpcId:
+    Type: AWS::EC2::VPC::Id
+
+Resources:
+  DataStreams:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: kinesis-logs-demo
+      ShardCount: 1
+
+  ServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows http to our hosts and SSH from local only
+      VpcId: !Ref vpcId
+      SecurityGroupIngress:
+        # SSH port to managae instance, Only during development then close this port
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  S3ReadOnlyEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: "KDSAgentPolicy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                Resource: !GetAtt DataStreams.Arn
+
+  ServerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: S3ReadOnlyEC2Role
+
+  LogGenearatorServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: "server-devops-key"
+      ImageId: ami-0dc2d3e4c0f9ebd18
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref ServerProfile
+      Monitoring: true
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            # 10gb for hard drive
+            VolumeSize: "10"
+      SecurityGroupIds:
+        - Ref: ServerSecGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum install aws-kinesis-agent --assumeyes
+          aws s3 cp s3://kinesis-agent-demo-eder-2021/artifacts.zip artifacts.zip && unzip -o artifacts.zip
+          mv agent.json /etc/aws-kinesis/agent.json -f
+          mkdir -p /var/log/amazonlog/
+          python3 LogGenerator.py
+          service aws-kinesis-agent start
