@@ -76,9 +76,11 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
+          yum update -y
           yum install aws-kinesis-agent --assumeyes
           aws s3 cp s3://kinesis-agent-demo-eder-2021/artifacts.zip artifacts.zip && unzip -o artifacts.zip
           mv agent.json /etc/aws-kinesis/agent.json -f
           mkdir -p /var/log/amazonlog/
           python3 LogGenerator.py
           service aws-kinesis-agent start
+          chkconfig aws-kinesis-agent on
